@@ -213,6 +213,15 @@ class RateLimiter {
     const record = this.attempts.get(identifier);
 
     if (!record || now > record.resetTime) {
+      // Evict oldest entries if map exceeds max size to prevent unbounded growth
+      if (this.attempts.size >= 10_000) {
+        this.cleanup();
+        // If still too large after cleanup, drop oldest entries
+        if (this.attempts.size >= 10_000) {
+          const firstKey = this.attempts.keys().next().value;
+          if (firstKey) this.attempts.delete(firstKey);
+        }
+      }
       // Reset or create new record
       this.attempts.set(identifier, {
         count: 1,

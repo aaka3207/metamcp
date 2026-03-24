@@ -23,6 +23,31 @@ export interface ApiKeyAuthenticatedRequest extends express.Request {
 const apiKeysRepository = new ApiKeysRepository();
 
 /**
+ * Simple TTL cache for OAuth token introspection results.
+ * Prevents re-introspecting the same token on every request,
+ * which otherwise causes DB query amplification and event loop saturation.
+ */
+const TOKEN_INTROSPECTION_CACHE_TTL_MS = 60_000; // 60 seconds
+const TOKEN_INTROSPECTION_CACHE_MAX_SIZE = 10_000;
+const tokenIntrospectionCache = new Map<
+  string,
+  {
+    result: { valid: boolean; user_id?: string; scopes?: string[]; error?: string };
+    expiresAt: number;
+  }
+>();
+
+// Cleanup stale cache entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of tokenIntrospectionCache) {
+    if (now > entry.expiresAt) {
+      tokenIntrospectionCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+/**
  * Helper function to get the correct base URL from request
  * Prioritizes APP_URL environment variable, then checks proxy headers
  */
@@ -63,6 +88,12 @@ async function validateOAuthToken(
   try {
     // Check if this is our MCP OAuth token format
     if (token.startsWith("mcp_token_")) {
+      // Check cache first to avoid repeated introspection calls
+      const cached = tokenIntrospectionCache.get(token);
+      if (cached && Date.now() < cached.expiresAt) {
+        return cached.result;
+      }
+
       // For MCP tokens, use introspection endpoint to validate
       // This allows us to check against the stored token data
       try {
@@ -80,7 +111,10 @@ async function validateOAuthToken(
         const introspectResponse = await fetch(introspectRequest);
 
         if (!introspectResponse.ok) {
-          return { valid: false, error: "Token introspection failed" };
+          const result = { valid: false, error: "Token introspection failed" } as const;
+          // Cache failures briefly (10s) to avoid hammering on repeated bad tokens
+          tokenIntrospectionCache.set(token, { result, expiresAt: Date.now() + 10_000 });
+          return result;
         }
 
         const introspectData = (await introspectResponse.json()) as {
@@ -90,16 +124,31 @@ async function validateOAuthToken(
         };
 
         if (!introspectData.active) {
-          return { valid: false, error: "Token is not active" };
+          const result = { valid: false, error: "Token is not active" } as const;
+          tokenIntrospectionCache.set(token, { result, expiresAt: Date.now() + 10_000 });
+          return result;
         }
 
-        return {
+        const result = {
           valid: true,
           user_id: introspectData.sub,
           scopes: introspectData.scope
             ? introspectData.scope.split(" ")
             : ["admin"],
         };
+
+        // Cache successful validations for the full TTL
+        // Evict oldest if cache is full
+        if (tokenIntrospectionCache.size >= TOKEN_INTROSPECTION_CACHE_MAX_SIZE) {
+          const firstKey = tokenIntrospectionCache.keys().next().value;
+          if (firstKey) tokenIntrospectionCache.delete(firstKey);
+        }
+        tokenIntrospectionCache.set(token, {
+          result,
+          expiresAt: Date.now() + TOKEN_INTROSPECTION_CACHE_TTL_MS,
+        });
+
+        return result;
       } catch (error) {
         logger.error("Error introspecting MCP token:", error);
         return { valid: false, error: "Token validation failed" };

@@ -6,6 +6,9 @@ import { configService } from "../config.service";
 import { mcpServerPool } from "./mcp-server-pool";
 import { createServer } from "./metamcp-proxy";
 
+// Default session lifetime (1 hour) used when SESSION_LIFETIME is not configured.
+const DEFAULT_SESSION_LIFETIME_MS = 60 * 60 * 1000;
+
 export interface MetaMcpServerInstance {
   server: Server;
   cleanup: () => Promise<void>;
@@ -559,12 +562,8 @@ export class MetaMcpServerPool {
    */
   private async cleanupExpiredSessions(): Promise<void> {
     try {
-      const sessionLifetime = await configService.getSessionLifetime();
-
-      // If session lifetime is null, sessions are infinite - skip cleanup
-      if (sessionLifetime === null) {
-        return;
-      }
+      const sessionLifetime =
+        (await configService.getSessionLifetime()) ?? DEFAULT_SESSION_LIFETIME_MS;
 
       const now = Date.now();
       const expiredSessionIds: string[] = [];
@@ -608,7 +607,8 @@ export class MetaMcpServerPool {
     const age = this.getSessionAge(sessionId);
     if (age === undefined) return false;
 
-    const sessionLifetime = await configService.getSessionLifetime();
+    const sessionLifetime =
+      (await configService.getSessionLifetime()) ?? DEFAULT_SESSION_LIFETIME_MS;
     return age > sessionLifetime;
   }
 }
