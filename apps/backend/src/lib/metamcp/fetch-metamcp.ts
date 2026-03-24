@@ -62,12 +62,14 @@ export async function getMcpServers(
       )
       .where(and(...whereConditions));
 
+    // Batch-fetch all OAuth sessions in a single query (fixes N+1 problem)
+    const serverUuids = servers.map((s) => s.uuid);
+    const oauthSessionsMap =
+      await oauthSessionsRepository.findByMcpServerUuids(serverUuids);
+
     const serverDict: Record<string, ServerParameters> = {};
     for (const server of servers) {
-      // Fetch OAuth tokens from OAuth sessions table
-      const oauthSession = await oauthSessionsRepository.findByMcpServerUuid(
-        server.uuid,
-      );
+      const oauthSession = oauthSessionsMap.get(server.uuid);
       let oauthTokens = null;
 
       if (oauthSession && oauthSession.tokens) {

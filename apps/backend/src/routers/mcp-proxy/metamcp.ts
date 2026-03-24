@@ -22,6 +22,26 @@ const metamcpServers: Map<
     cleanup: () => Promise<void>;
   }
 > = new Map(); // MetaMCP servers by sessionId
+const sessionTimestamps: Map<string, number> = new Map(); // Track when sessions were created
+
+// Periodic cleanup of stale sessions that weren't cleaned up by res.close
+const MCP_PROXY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const MCP_PROXY_SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+setInterval(async () => {
+  const now = Date.now();
+  const staleSessionIds: string[] = [];
+  for (const [sessionId, timestamp] of sessionTimestamps) {
+    if (now - timestamp > MCP_PROXY_SESSION_MAX_AGE_MS) {
+      staleSessionIds.push(sessionId);
+    }
+  }
+  if (staleSessionIds.length > 0) {
+    console.log(
+      `Cleaning up ${staleSessionIds.length} stale mcp-proxy/metamcp sessions`,
+    );
+    await Promise.allSettled(staleSessionIds.map((id) => cleanupSession(id)));
+  }
+}, MCP_PROXY_CLEANUP_INTERVAL_MS);
 
 // Create a MetaMCP server instance
 const createMetaMcpServer = async (
@@ -40,6 +60,7 @@ const createMetaMcpServer = async (
 // Cleanup function for a specific session
 const cleanupSession = async (sessionId: string) => {
   console.log(`Cleaning up session ${sessionId}`);
+  sessionTimestamps.delete(sessionId);
 
   // Clean up transport
   const transport = webAppTransports.get(sessionId);
@@ -117,6 +138,7 @@ metamcpRouter.post("/:uuid/mcp", async (req, res) => {
 
             webAppTransports.set(newSessionId, webAppTransport);
             metamcpServers.set(newSessionId, mcpServerInstance);
+            sessionTimestamps.set(newSessionId, Date.now());
 
             console.log(
               `MetaMCP Client <-> Proxy sessionId: ${newSessionId} for namespace ${namespaceUuid}`,
@@ -218,6 +240,7 @@ metamcpRouter.get("/:uuid/sse", async (req, res) => {
 
     webAppTransports.set(sessionId, webAppTransport);
     metamcpServers.set(sessionId, mcpServerInstance);
+    sessionTimestamps.set(sessionId, Date.now());
 
     // Handle cleanup when connection closes
     res.on("close", async () => {

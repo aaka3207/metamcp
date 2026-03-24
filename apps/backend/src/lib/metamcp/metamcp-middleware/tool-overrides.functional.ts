@@ -59,8 +59,11 @@ class ToolOverridesCache {
   private overrideCache = new Map<string, ToolOverride>();
   private reverseNameCache = new Map<string, string>(); // overrideName -> originalName
   private expiry = new Map<string, number>();
-  private persistentKeys = new Set<string>(); // keys that never expire
+  private persistentKeys = new Set<string>(); // keys with extended TTL
+  private persistentExpiry = new Map<string, number>(); // even persistent keys get a long TTL
   private ttl: number;
+  private static readonly PERSISTENT_TTL = 60 * 60 * 1000; // 1 hour for "persistent" keys
+  private static readonly MAX_CACHE_SIZE = 50_000;
 
   constructor(ttl: number = 1000) {
     this.ttl = ttl;
@@ -85,8 +88,16 @@ class ToolOverridesCache {
   ): ToolOverride | null {
     const key = this.getCacheKey(namespaceUuid, serverName, toolName);
 
-    // Check if this is a persistent key that never expires
+    // Check if this is a persistent key (has extended TTL, not truly infinite)
     if (this.persistentKeys.has(key)) {
+      const pExpiry = this.persistentExpiry.get(key);
+      if (pExpiry && Date.now() > pExpiry) {
+        // Even persistent keys expire after the extended TTL
+        this.overrideCache.delete(key);
+        this.persistentKeys.delete(key);
+        this.persistentExpiry.delete(key);
+        return null;
+      }
       return this.overrideCache.get(key) || null;
     }
 
@@ -112,8 +123,9 @@ class ToolOverridesCache {
     this.overrideCache.set(key, override);
 
     if (isPersistent) {
-      // Mark as persistent - never expires
+      // Mark as persistent with extended TTL (not truly infinite to prevent unbounded growth)
       this.persistentKeys.add(key);
+      this.persistentExpiry.set(key, Date.now() + ToolOverridesCache.PERSISTENT_TTL);
     } else {
       // Set normal expiry
       this.expiry.set(key, Date.now() + this.ttl);
@@ -150,6 +162,7 @@ class ToolOverridesCache {
           this.overrideCache.delete(key);
           this.expiry.delete(key);
           this.persistentKeys.delete(key);
+          this.persistentExpiry.delete(key);
         }
       }
       for (const key of this.reverseNameCache.keys()) {
@@ -162,6 +175,7 @@ class ToolOverridesCache {
       this.reverseNameCache.clear();
       this.expiry.clear();
       this.persistentKeys.clear();
+      this.persistentExpiry.clear();
     }
   }
 }

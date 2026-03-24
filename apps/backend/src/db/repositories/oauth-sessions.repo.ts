@@ -3,7 +3,7 @@ import {
   OAuthSessionCreateInput,
   OAuthSessionUpdateInput,
 } from "@repo/zod-types";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "../index";
 import { oauthSessionsTable } from "../schema";
@@ -19,6 +19,23 @@ export class OAuthSessionsRepository {
       .limit(1);
 
     return session;
+  }
+
+  async findByMcpServerUuids(
+    mcpServerUuids: string[],
+  ): Promise<Map<string, DatabaseOAuthSession>> {
+    if (mcpServerUuids.length === 0) return new Map();
+
+    const sessions = await db
+      .select()
+      .from(oauthSessionsTable)
+      .where(inArray(oauthSessionsTable.mcp_server_uuid, mcpServerUuids));
+
+    const map = new Map<string, DatabaseOAuthSession>();
+    for (const session of sessions) {
+      map.set(session.mcp_server_uuid, session);
+    }
+    return map;
   }
 
   async create(input: OAuthSessionCreateInput): Promise<DatabaseOAuthSession> {

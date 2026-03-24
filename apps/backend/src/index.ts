@@ -2,6 +2,8 @@ import express from "express";
 
 import { auth } from "./auth";
 import { initializeIdleServers } from "./lib/startup";
+import { mcpServerPool } from "./lib/metamcp/mcp-server-pool";
+import { metaMcpServerPool } from "./lib/metamcp/metamcp-server-pool";
 import mcpProxyRouter from "./routers/mcp-proxy";
 import oauthRouter from "./routers/oauth";
 import publicEndpointsRouter from "./routers/public-metamcp";
@@ -104,7 +106,35 @@ app.listen(12009, async () => {
 });
 
 app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
+  const memUsage = process.memoryUsage();
+  const mcpPool = mcpServerPool.getPoolStatus();
+  const metaMcpPool = metaMcpServerPool.getPoolStatus();
+
+  const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+  const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+
+  // Return 503 if resource usage is critically high
+  const isHealthy =
+    mcpPool.activeSessionIds.length < 500 && heapUsedMB < 1500;
+
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? "ok" : "degraded",
+    memory: {
+      heapUsedMB,
+      rssMB,
+    },
+    pools: {
+      mcpServer: {
+        idle: mcpPool.idle,
+        active: mcpPool.active,
+        activeSessions: mcpPool.activeSessionIds.length,
+      },
+      metaMcpServer: {
+        idle: metaMcpPool.idle,
+        active: metaMcpPool.active,
+        activeSessions: metaMcpPool.activeSessionIds.length,
+      },
+    },
+    uptime: Math.round(process.uptime()),
   });
 });

@@ -1,5 +1,9 @@
 import { configService } from "./config.service";
 
+// Default session lifetime (1 hour) used when SESSION_LIFETIME is not configured.
+// Without this, cleanup timers become no-ops and sessions accumulate indefinitely.
+const DEFAULT_SESSION_LIFETIME_MS = 60 * 60 * 1000; // 1 hour
+
 export interface SessionLifetimeManager<T> {
   addSession(sessionId: string, session: T): void;
   removeSession(sessionId: string): void;
@@ -56,10 +60,8 @@ export class SessionLifetimeManagerImpl<T>
     const age = this.getSessionAge(sessionId);
     if (age === undefined) return false;
 
-    const sessionLifetime = await configService.getSessionLifetime();
-    // If session lifetime is null, sessions are infinite and never expire
-    if (sessionLifetime === null) return false;
-    
+    const sessionLifetime =
+      (await configService.getSessionLifetime()) ?? DEFAULT_SESSION_LIFETIME_MS;
     return age > sessionLifetime;
   }
 
@@ -67,13 +69,9 @@ export class SessionLifetimeManagerImpl<T>
     cleanupCallback: (sessionId: string, session: T) => Promise<void>,
   ): Promise<void> {
     try {
-      const sessionLifetime = await configService.getSessionLifetime();
-      
-      // If session lifetime is null, sessions are infinite - skip cleanup
-      if (sessionLifetime === null) {
-        return;
-      }
-      
+      const sessionLifetime =
+        (await configService.getSessionLifetime()) ?? DEFAULT_SESSION_LIFETIME_MS;
+
       const now = Date.now();
       const expiredSessions: Array<{ sessionId: string; session: T }> = [];
 

@@ -192,10 +192,38 @@ serverRouter.use(betterAuthMcpMiddleware);
 
 const webAppTransports: Map<string, Transport> = new Map<string, Transport>(); // Web app transports by web app sessionId
 const serverTransports: Map<string, Transport> = new Map<string, Transport>(); // Server Transports by web app sessionId
+const serverSessionTimestamps: Map<string, number> = new Map(); // Track when sessions were created
+
+// Periodic cleanup of stale sessions that weren't cleaned up by res.close
+const SERVER_PROXY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const SERVER_PROXY_SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+setInterval(async () => {
+  const now = Date.now();
+  const staleSessionIds: string[] = [];
+  for (const [sessionId, timestamp] of serverSessionTimestamps) {
+    if (now - timestamp > SERVER_PROXY_SESSION_MAX_AGE_MS) {
+      staleSessionIds.push(sessionId);
+    }
+  }
+  if (staleSessionIds.length > 0) {
+    console.log(
+      `Cleaning up ${staleSessionIds.length} stale mcp-proxy/server sessions`,
+    );
+    await Promise.allSettled(staleSessionIds.map((id) => cleanupSession(id)));
+  }
+
+  // Also clean up stale stdioCommandCooldowns entries
+  for (const [key, cooldownEnd] of stdioCommandCooldowns) {
+    if (now >= cooldownEnd) {
+      stdioCommandCooldowns.delete(key);
+    }
+  }
+}, SERVER_PROXY_CLEANUP_INTERVAL_MS);
 
 // Session cleanup function
 const cleanupSession = async (sessionId: string) => {
   console.log(`Cleaning up proxy session ${sessionId}`);
+  serverSessionTimestamps.delete(sessionId);
 
   // Clean up web app transport
   const webAppTransport = webAppTransports.get(sessionId);
@@ -447,6 +475,7 @@ serverRouter.post("/mcp", async (req, res) => {
         sessionIdGenerator: () => newSessionId,
         onsessioninitialized: (sessionId) => {
           webAppTransports.set(sessionId, webAppTransport);
+          serverSessionTimestamps.set(sessionId, Date.now());
           if (serverTransport) {
             serverTransports.set(sessionId, serverTransport);
           }
@@ -571,6 +600,7 @@ serverRouter.get("/stdio", async (req, res) => {
 
     webAppTransports.set(webAppTransport.sessionId, webAppTransport);
     serverTransports.set(webAppTransport.sessionId, serverTransport);
+    serverSessionTimestamps.set(webAppTransport.sessionId, Date.now());
 
     // Handle cleanup when connection closes
     const handleConnectionClose = () => {
@@ -774,6 +804,7 @@ serverRouter.get("/sse", async (req, res) => {
         res,
       );
       webAppTransports.set(webAppTransport.sessionId, webAppTransport);
+      serverSessionTimestamps.set(webAppTransport.sessionId, Date.now());
       console.log("Created client transport");
       if (serverTransport) {
         serverTransports.set(webAppTransport.sessionId, serverTransport);

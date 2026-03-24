@@ -14,6 +14,9 @@ if (!DATABASE_URL) {
 // when the database terminates idle connections (e.g., during maintenance).
 export const pool = new Pool({
   connectionString: DATABASE_URL,
+  max: 20, // Default was 10; OAuth introspection queries compete with normal queries
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
   ...(POSTGRES_CA_CERT && {
     ssl: {
       ca: POSTGRES_CA_CERT,
