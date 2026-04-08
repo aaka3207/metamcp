@@ -48,14 +48,22 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
     // Handle refresh_token grant
     if (grant_type === "refresh_token") {
       if (!refresh_token) {
+        logger.warn("[OAuth] refresh_token grant missing refresh_token param");
         return res.status(400).json({
           error: "invalid_request",
           error_description: "Missing refresh_token",
         });
       }
 
+      logger.info("[OAuth] refresh_token grant requested", {
+        tokenPrefix: refresh_token.substring(0, 16) + "...",
+      });
+
       const tokenData = await oauthRepository.getRefreshToken(refresh_token);
       if (!tokenData) {
+        logger.warn("[OAuth] refresh_token not found in database", {
+          tokenPrefix: refresh_token.substring(0, 16) + "...",
+        });
         return res.status(400).json({
           error: "invalid_grant",
           error_description: "Invalid refresh token",
@@ -63,6 +71,11 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
       }
 
       if (Date.now() > tokenData.expires_at.getTime()) {
+        logger.warn("[OAuth] refresh_token expired", {
+          clientId: tokenData.client_id,
+          userId: tokenData.user_id,
+          expiredAt: tokenData.expires_at.toISOString(),
+        });
         await oauthRepository.deleteRefreshToken(refresh_token);
         return res.status(400).json({
           error: "invalid_grant",
@@ -90,6 +103,14 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
         user_id: tokenData.user_id,
         scope: tokenData.scope,
         expires_at: Date.now() + refreshExpiresIn * 1000,
+      });
+
+      logger.info("[OAuth] refresh_token rotated successfully", {
+        clientId: tokenData.client_id,
+        userId: tokenData.user_id,
+        newAccessTokenPrefix: newAccessToken.substring(0, 16) + "...",
+        accessExpiresIn,
+        refreshExpiresInDays: 30,
       });
 
       return res.json({
@@ -231,6 +252,12 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
     // Code is valid, delete it (authorization codes are single-use)
     await oauthRepository.deleteAuthCode(code);
 
+    logger.info("[OAuth] authorization_code exchange successful", {
+      clientId: codeData.client_id,
+      userId: codeData.user_id,
+      scope: codeData.scope,
+    });
+
     // Generate access token and refresh token
     const accessToken = generateSecureAccessToken();
     const accessExpiresIn = 3600; // 1 hour
@@ -251,6 +278,13 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
       user_id: codeData.user_id,
       scope: codeData.scope,
       expires_at: Date.now() + refreshExpiresIn * 1000,
+    });
+
+    logger.info("[OAuth] issued access_token + refresh_token", {
+      clientId: codeData.client_id,
+      userId: codeData.user_id,
+      accessExpiresIn,
+      refreshExpiresInDays: 30,
     });
 
     res.json({
@@ -303,6 +337,10 @@ tokenRouter.post("/oauth/introspect", async (req, res) => {
 
     // Check if token has expired
     if (Date.now() > tokenData.expires_at.getTime()) {
+      logger.info("[OAuth] introspect: access_token expired", {
+        userId: tokenData.user_id,
+        expiredAt: tokenData.expires_at.toISOString(),
+      });
       await oauthRepository.deleteAccessToken(token);
       return res.json({
         active: false,
