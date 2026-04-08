@@ -111,16 +111,34 @@ export const configService = {
       ConfigKeyEnum.Enum.SESSION_LIFETIME,
     );
     if (!config?.value) {
-      return null; // No session lifetime set - infinite sessions
+      return null; // No config row at all - never configured
+    }
+    if (config.value === "infinite") {
+      return null; // Explicitly disabled by user
     }
     const lifetime = parseInt(config.value, 10);
     return isNaN(lifetime) ? null : lifetime;
   },
 
+  /**
+   * Check whether SESSION_LIFETIME has ever been configured (either to a
+   * value or explicitly to "infinite"). Returns false only on fresh installs.
+   */
+  async isSessionLifetimeConfigured(): Promise<boolean> {
+    const config = await configRepo.getConfig(
+      ConfigKeyEnum.Enum.SESSION_LIFETIME,
+    );
+    return !!config;
+  },
+
   async setSessionLifetime(lifetime?: number | null): Promise<void> {
     if (lifetime === null || lifetime === undefined) {
-      // Remove the config to indicate infinite session lifetime
-      await configRepo.deleteConfig(ConfigKeyEnum.Enum.SESSION_LIFETIME);
+      // Store "infinite" so we can distinguish from "never configured"
+      await configRepo.setConfig(
+        ConfigKeyEnum.Enum.SESSION_LIFETIME,
+        "infinite",
+        "Session lifetime explicitly disabled - infinite sessions",
+      );
     } else {
       await configRepo.setConfig(
         ConfigKeyEnum.Enum.SESSION_LIFETIME,
