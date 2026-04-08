@@ -92,6 +92,9 @@ RUN pnpm install --prod
 # Install drizzle-kit locally in backend for migrations
 RUN cd apps/backend && pnpm add drizzle-kit@0.31.1
 
+# Pre-install MCP servers that use npx to avoid cold-start failures
+RUN npm install -g hevy-mcp
+
 # Copy startup script
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
