@@ -3,7 +3,11 @@ import express from "express";
 import logger from "@/utils/logger";
 
 import { oauthRepository } from "../../db/repositories";
-import { generateSecureAccessToken, rateLimitToken } from "./utils";
+import {
+  generateSecureAccessToken,
+  generateSecureRefreshToken,
+  rateLimitToken,
+} from "./utils";
 
 const tokenRouter = express.Router();
 
@@ -29,14 +33,71 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
       });
     }
 
-    const { grant_type, code, redirect_uri, client_id, code_verifier } =
+    const { grant_type, code, redirect_uri, client_id, code_verifier, refresh_token } =
       req.body;
 
     // Validate grant type
-    if (grant_type !== "authorization_code") {
+    if (grant_type !== "authorization_code" && grant_type !== "refresh_token") {
       return res.status(400).json({
         error: "unsupported_grant_type",
-        error_description: "Only 'authorization_code' grant type is supported",
+        error_description:
+          "Only 'authorization_code' and 'refresh_token' grant types are supported",
+      });
+    }
+
+    // Handle refresh_token grant
+    if (grant_type === "refresh_token") {
+      if (!refresh_token) {
+        return res.status(400).json({
+          error: "invalid_request",
+          error_description: "Missing refresh_token",
+        });
+      }
+
+      const tokenData = await oauthRepository.getRefreshToken(refresh_token);
+      if (!tokenData) {
+        return res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Invalid refresh token",
+        });
+      }
+
+      if (Date.now() > tokenData.expires_at.getTime()) {
+        await oauthRepository.deleteRefreshToken(refresh_token);
+        return res.status(400).json({
+          error: "invalid_grant",
+          error_description: "Refresh token has expired",
+        });
+      }
+
+      // Rotate: delete old refresh token, issue new access + refresh tokens
+      await oauthRepository.deleteRefreshToken(refresh_token);
+
+      const newAccessToken = generateSecureAccessToken();
+      const accessExpiresIn = 3600; // 1 hour
+      const newRefreshToken = generateSecureRefreshToken();
+      const refreshExpiresIn = 30 * 24 * 3600; // 30 days
+
+      await oauthRepository.setAccessToken(newAccessToken, {
+        client_id: tokenData.client_id,
+        user_id: tokenData.user_id,
+        scope: tokenData.scope,
+        expires_at: Date.now() + accessExpiresIn * 1000,
+      });
+
+      await oauthRepository.setRefreshToken(newRefreshToken, {
+        client_id: tokenData.client_id,
+        user_id: tokenData.user_id,
+        scope: tokenData.scope,
+        expires_at: Date.now() + refreshExpiresIn * 1000,
+      });
+
+      return res.json({
+        access_token: newAccessToken,
+        token_type: "Bearer",
+        expires_in: accessExpiresIn,
+        refresh_token: newRefreshToken,
+        scope: tokenData.scope,
       });
     }
 
@@ -170,22 +231,33 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
     // Code is valid, delete it (authorization codes are single-use)
     await oauthRepository.deleteAuthCode(code);
 
-    // Generate access token
+    // Generate access token and refresh token
     const accessToken = generateSecureAccessToken();
-    const expiresIn = 3600; // 1 hour
+    const accessExpiresIn = 3600; // 1 hour
+    const refreshToken = generateSecureRefreshToken();
+    const refreshExpiresIn = 30 * 24 * 3600; // 30 days
 
     // Store access token data
     await oauthRepository.setAccessToken(accessToken, {
       client_id: codeData.client_id,
       user_id: codeData.user_id,
       scope: codeData.scope,
-      expires_at: Date.now() + expiresIn * 1000,
+      expires_at: Date.now() + accessExpiresIn * 1000,
+    });
+
+    // Store refresh token data
+    await oauthRepository.setRefreshToken(refreshToken, {
+      client_id: codeData.client_id,
+      user_id: codeData.user_id,
+      scope: codeData.scope,
+      expires_at: Date.now() + refreshExpiresIn * 1000,
     });
 
     res.json({
       access_token: accessToken,
       token_type: "Bearer",
-      expires_in: expiresIn,
+      expires_in: accessExpiresIn,
+      refresh_token: refreshToken,
       scope: codeData.scope,
     });
   } catch (error) {

@@ -32,6 +32,14 @@ export function generateSecureAccessToken(): string {
 }
 
 /**
+ * Generate cryptographically secure refresh token
+ */
+export function generateSecureRefreshToken(): string {
+  const randomPart = randomBytes(32).toString("base64url");
+  return `mcp_refresh_${randomPart}`;
+}
+
+/**
  * Generate cryptographically secure client ID
  * Follows OAuth 2.1 security requirements
  */

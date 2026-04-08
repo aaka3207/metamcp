@@ -1,7 +1,9 @@
 import { ServerParameters } from "@repo/zod-types";
 
 import { mcpServersRepository, namespacesRepository } from "../db/repositories";
+import { configRepo } from "../db/repositories/config.repo";
 import { initializeEnvironmentConfiguration } from "./bootstrap.service";
+import { configService } from "./config.service";
 import { metaMcpServerPool } from "./metamcp";
 import { convertDbServerToParams } from "./metamcp/utils";
 
@@ -36,6 +38,22 @@ export async function initializeOnStartup(): Promise<void> {
     }
   } else {
     console.log("Environment bootstrap disabled via BOOTSTRAP_ENABLE=false");
+  }
+
+  // Seed a default SESSION_LIFETIME if the config row doesn't exist at all.
+  // This ensures cleanup timers are active on fresh installs.
+  // If a user explicitly disables it via the UI, setSessionLifetime(null)
+  // deletes the row, so this will re-seed on next restart. That's intentional:
+  // infinite sessions are the root cause of memory leaks, so we default to safe.
+  const existingLifetimeConfig = await configRepo.getConfig("SESSION_LIFETIME");
+  if (!existingLifetimeConfig) {
+    const DEFAULT_SESSION_LIFETIME_MINUTES = 240; // 4 hours, matches UI default
+    await configService.setSessionLifetime(
+      DEFAULT_SESSION_LIFETIME_MINUTES * 60 * 1000,
+    );
+    console.log(
+      `Seeded default SESSION_LIFETIME: ${DEFAULT_SESSION_LIFETIME_MINUTES} minutes`,
+    );
   }
 }
 

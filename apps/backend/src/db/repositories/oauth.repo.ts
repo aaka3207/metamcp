@@ -13,6 +13,7 @@ import {
   oauthAccessTokensTable,
   oauthAuthorizationCodesTable,
   oauthClientsTable,
+  oauthRefreshTokensTable,
 } from "../schema";
 
 export class OAuthRepository {
@@ -103,6 +104,41 @@ export class OAuthRepository {
       .where(eq(oauthAccessTokensTable.access_token, token));
   }
 
+  // ===== Refresh Tokens =====
+
+  async getRefreshToken(token: string) {
+    const result = await db
+      .select()
+      .from(oauthRefreshTokensTable)
+      .where(eq(oauthRefreshTokensTable.refresh_token, token))
+      .limit(1);
+    return result[0] || null;
+  }
+
+  async setRefreshToken(
+    token: string,
+    data: {
+      client_id: string;
+      user_id: string;
+      scope: string;
+      expires_at: number;
+    },
+  ): Promise<void> {
+    await db.insert(oauthRefreshTokensTable).values({
+      refresh_token: token,
+      client_id: data.client_id,
+      user_id: data.user_id,
+      scope: data.scope,
+      expires_at: new Date(data.expires_at),
+    });
+  }
+
+  async deleteRefreshToken(token: string): Promise<void> {
+    await db
+      .delete(oauthRefreshTokensTable)
+      .where(eq(oauthRefreshTokensTable.refresh_token, token));
+  }
+
   // ===== Cleanup =====
 
   async cleanupExpired(): Promise<void> {
@@ -114,6 +150,9 @@ export class OAuthRepository {
       db
         .delete(oauthAccessTokensTable)
         .where(lt(oauthAccessTokensTable.expires_at, now)),
+      db
+        .delete(oauthRefreshTokensTable)
+        .where(lt(oauthRefreshTokensTable.expires_at, now)),
     ]);
   }
 }

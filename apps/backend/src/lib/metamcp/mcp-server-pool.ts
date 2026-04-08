@@ -6,9 +6,6 @@ import { configService } from "../config.service";
 import { ConnectedClient, connectMetaMcpClient } from "./client";
 import { serverErrorTracker } from "./server-error-tracker";
 
-// Default session lifetime (1 hour) used when SESSION_LIFETIME is not configured.
-const DEFAULT_SESSION_LIFETIME_MS = 60 * 60 * 1000;
-
 export interface McpServerPoolStatus {
   idle: number;
   active: number;
@@ -664,8 +661,8 @@ export class McpServerPool {
    */
   private async cleanupExpiredSessions(): Promise<void> {
     try {
-      const sessionLifetime =
-        (await configService.getSessionLifetime()) ?? DEFAULT_SESSION_LIFETIME_MS;
+      const sessionLifetime = await configService.getSessionLifetime();
+      if (sessionLifetime === null) return;
 
       const now = Date.now();
       const expiredSessionIds: string[] = [];
@@ -709,8 +706,8 @@ export class McpServerPool {
     const age = this.getSessionAge(sessionId);
     if (age === undefined) return false;
 
-    const sessionLifetime =
-      (await configService.getSessionLifetime()) ?? DEFAULT_SESSION_LIFETIME_MS;
+    const sessionLifetime = await configService.getSessionLifetime();
+    if (sessionLifetime === null) return false;
     return age > sessionLifetime;
   }
 }

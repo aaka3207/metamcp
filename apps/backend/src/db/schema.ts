@@ -484,3 +484,27 @@ export const oauthAccessTokensTable = pgTable(
     index("oauth_access_tokens_expires_at_idx").on(table.expires_at),
   ],
 );
+
+// OAuth Refresh Tokens table
+export const oauthRefreshTokensTable = pgTable(
+  "oauth_refresh_tokens",
+  {
+    refresh_token: text("refresh_token").primaryKey(),
+    client_id: text("client_id")
+      .notNull()
+      .references(() => oauthClientsTable.client_id, { onDelete: "cascade" }),
+    user_id: text("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull().default("admin"),
+    expires_at: timestamp("expires_at", { withTimezone: true }).notNull(),
+    created_at: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("oauth_refresh_tokens_client_id_idx").on(table.client_id),
+    index("oauth_refresh_tokens_user_id_idx").on(table.user_id),
+    index("oauth_refresh_tokens_expires_at_idx").on(table.expires_at),
+  ],
+);
