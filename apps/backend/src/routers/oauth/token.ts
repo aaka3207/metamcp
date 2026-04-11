@@ -87,7 +87,7 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
       await oauthRepository.deleteRefreshToken(refresh_token);
 
       const newAccessToken = generateSecureAccessToken();
-      const accessExpiresIn = 3600; // 1 hour
+      const accessExpiresIn = 30 * 24 * 3600; // 30 days - Claude Desktop doesn't reliably use refresh tokens
       const newRefreshToken = generateSecureRefreshToken();
       const refreshExpiresIn = 30 * 24 * 3600; // 30 days
 
@@ -260,7 +260,7 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
 
     // Generate access token and refresh token
     const accessToken = generateSecureAccessToken();
-    const accessExpiresIn = 3600; // 1 hour
+    const accessExpiresIn = 30 * 24 * 3600; // 30 days - Claude Desktop doesn't reliably use refresh tokens
     const refreshToken = generateSecureRefreshToken();
     const refreshExpiresIn = 30 * 24 * 3600; // 30 days
 
