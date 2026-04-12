@@ -114,6 +114,23 @@ class ToolOverridesCache {
     return this.overrideCache.get(key) || null;
   }
 
+  evictExpired(): void {
+    const now = Date.now();
+    for (const [key, exp] of this.expiry) {
+      if (now > exp) {
+        this.overrideCache.delete(key);
+        this.expiry.delete(key);
+      }
+    }
+    for (const [key, exp] of this.persistentExpiry) {
+      if (now > exp) {
+        this.overrideCache.delete(key);
+        this.persistentKeys.delete(key);
+        this.persistentExpiry.delete(key);
+      }
+    }
+  }
+
   set(
     namespaceUuid: string,
     serverName: string,
@@ -121,6 +138,24 @@ class ToolOverridesCache {
     override: ToolOverride,
     isPersistent: boolean = false,
   ): void {
+    // Enforce size limit
+    if (this.overrideCache.size >= ToolOverridesCache.MAX_CACHE_SIZE) {
+      this.evictExpired();
+      // If still over limit, evict oldest 10%
+      if (this.overrideCache.size >= ToolOverridesCache.MAX_CACHE_SIZE) {
+        const toEvict = Math.floor(ToolOverridesCache.MAX_CACHE_SIZE * 0.1);
+        let evicted = 0;
+        for (const key of this.overrideCache.keys()) {
+          if (evicted >= toEvict) break;
+          this.overrideCache.delete(key);
+          this.expiry.delete(key);
+          this.persistentKeys.delete(key);
+          this.persistentExpiry.delete(key);
+          evicted++;
+        }
+      }
+    }
+
     const key = this.getCacheKey(namespaceUuid, serverName, toolName);
     this.overrideCache.set(key, override);
 
@@ -184,6 +219,9 @@ class ToolOverridesCache {
 
 // Global cache instance
 const toolOverridesCache = new ToolOverridesCache();
+
+// Periodic cleanup of expired entries every 5 minutes
+setInterval(() => toolOverridesCache.evictExpired(), 5 * 60 * 1000);
 
 /**
  * Get tool overrides from database with caching

@@ -72,6 +72,16 @@ class ToolStatusCache {
     this.expiry.set(key, Date.now() + this.ttl);
   }
 
+  evictExpired(): void {
+    const now = Date.now();
+    for (const [key, exp] of this.expiry) {
+      if (now > exp) {
+        this.cache.delete(key);
+        this.expiry.delete(key);
+      }
+    }
+  }
+
   clear(namespaceUuid?: string): void {
     if (namespaceUuid) {
       for (const key of this.cache.keys()) {
@@ -89,6 +99,9 @@ class ToolStatusCache {
 
 // Global cache instance
 const toolStatusCache = new ToolStatusCache();
+
+// Periodic cleanup of expired entries every 60 seconds
+setInterval(() => toolStatusCache.evictExpired(), 60 * 1000);
 
 /**
  * Get tool status from database with caching

@@ -25,12 +25,14 @@ export class TokenBucketRateLimiter {
   private refillRate: number;
   private tokens: number;
   private lastRefill: number;
+  public lastUsed: number;
 
   constructor(capacity: number, refillRate: number) {
     this.capacity = capacity;
     this.refillRate = refillRate;
     this.tokens = capacity;
     this.lastRefill = Date.now() / 1000; // seconds
+    this.lastUsed = Date.now();
   }
 
   async consume(tokens: number = 1): Promise<boolean> {
@@ -42,6 +44,7 @@ export class TokenBucketRateLimiter {
       this.tokens + elapsed * this.refillRate,
     );
     this.lastRefill = now;
+    this.lastUsed = Date.now();
     logger.debug("tokens", this.tokens);
 
     if (this.tokens >= tokens) {
@@ -76,6 +79,13 @@ export class SlidingWindowRateLimiter {
     }
     return false;
   }
+
+  isStale(): boolean {
+    if (this.requests.length === 0) return true;
+    const now = Date.now() / 1000;
+    const cutoff = now - this.clientMaxRateSeconds;
+    return this.requests.every((t) => t < cutoff);
+  }
 }
 
 /**
@@ -90,6 +100,15 @@ export class RateLimiting {
     this.maxRateSeconds = 0;
     this.maxRate = 0;
     this.limiters = new Map();
+    // Clean up stale limiters every 10 minutes
+    setInterval(() => {
+      const staleThreshold = Date.now() - 30 * 60 * 1000; // 30 minutes
+      for (const [key, limiter] of this.limiters) {
+        if (limiter.lastUsed < staleThreshold) {
+          this.limiters.delete(key);
+        }
+      }
+    }, 10 * 60 * 1000);
   }
 
   async onRequest(context: Context, callNext: CallNext): Promise<any> {
@@ -144,6 +163,19 @@ export class SlidingWindowRateLimiting {
     this.clientMaxRateStrategy = "ip";
     this.clientMaxRateStrategyKey = "x-forwarded-for";
     this.limiters = new Map();
+    // Clean up stale limiters every 10 minutes
+    setInterval(() => {
+      for (const [key, innerMap] of this.limiters) {
+        for (const [ns, limiter] of innerMap) {
+          if (limiter.isStale()) {
+            innerMap.delete(ns);
+          }
+        }
+        if (innerMap.size === 0) {
+          this.limiters.delete(key);
+        }
+      }
+    }, 10 * 60 * 1000);
   }
 
   async onRequest(context: Context, callNext: CallNext): Promise<any> {

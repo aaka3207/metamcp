@@ -146,10 +146,7 @@ export const createServer = async (
     request,
     context,
   ) => {
-    console.log(
-      "[DEBUG-TOOLS] 🔍 tools/list called for namespace:",
-      namespaceUuid,
-    );
+    logger.debug(`tools/list called for namespace: ${namespaceUuid}`);
     const startTime = performance.now();
     const serverParams = await getMcpServers(
       context.namespaceUuid,
@@ -157,25 +154,25 @@ export const createServer = async (
     );
     const allTools: Tool[] = [];
 
+    // Clear stale mappings before repopulating
+    for (const key in toolToClient) delete toolToClient[key];
+    for (const key in toolToServerUuid) delete toolToServerUuid[key];
+
     // Track visited servers to detect circular references - reset on each call
     const visitedServers = new Set<string>();
 
     // We'll filter servers during processing after getting sessions to check actual MCP server names
     const allServerEntries = Object.entries(serverParams);
 
-    console.log(
-      `[DEBUG-TOOLS] 📋 Processing ${allServerEntries.length} servers`,
-    );
+    logger.debug(`Processing ${allServerEntries.length} servers`);
 
     await Promise.allSettled(
       allServerEntries.map(async ([mcpServerUuid, params]) => {
-        console.log(`[DEBUG-TOOLS] 🔧 Server: ${params.name || mcpServerUuid}`);
+        logger.debug(`Server: ${params.name || mcpServerUuid}`);
 
         // Skip if we've already visited this server to prevent circular references
         if (visitedServers.has(mcpServerUuid)) {
-          console.log(
-            `[DEBUG-TOOLS] ⏭️  Skipping already visited: ${params.name}`,
-          );
+          logger.debug(`Skipping already visited: ${params.name}`);
           return;
         }
         const session = await mcpServerPool.getSession(
@@ -185,7 +182,7 @@ export const createServer = async (
           namespaceUuid,
         );
         if (!session) {
-          console.log(`[DEBUG-TOOLS] ❌ No session for: ${params.name}`);
+          logger.debug(`No session for: ${params.name}`);
           return;
         }
 
@@ -244,8 +241,8 @@ export const createServer = async (
             hasMore = !!result.nextCursor;
           }
 
-          console.log(
-            `[DEBUG-TOOLS] ⏱️  Fetched ${allServerTools.length} tools from ${serverName} in ${(performance.now() - toolFetchStart).toFixed(2)}ms`,
+          logger.debug(
+            `Fetched ${allServerTools.length} tools from ${serverName} in ${(performance.now() - toolFetchStart).toFixed(2)}ms`,
           );
 
           // Save original tools to database (before middleware processing)
@@ -259,8 +256,8 @@ export const createServer = async (
               toolNames,
             );
 
-            console.log(
-              `[DEBUG-TOOLS] 🔍 Hash check for ${serverName}: ${hasChanged ? "CHANGED" : "UNCHANGED"}`,
+            logger.debug(
+              `Hash check for ${serverName}: ${hasChanged ? "CHANGED" : "UNCHANGED"}`,
             );
 
             if (hasChanged) {
@@ -309,8 +306,8 @@ export const createServer = async (
     );
 
     const totalTime = performance.now() - startTime;
-    console.log(
-      `[DEBUG-TOOLS] ✅ tools/list completed in ${totalTime.toFixed(2)}ms, returning ${allTools.length} tools`,
+    logger.debug(
+      `tools/list completed in ${totalTime.toFixed(2)}ms, returning ${allTools.length} tools`,
     );
 
     return { tools: allTools };
@@ -546,6 +543,9 @@ export const createServer = async (
     );
     const allPrompts: z.infer<typeof ListPromptsResultSchema>["prompts"] = [];
 
+    // Clear stale mappings before repopulating
+    for (const key in promptToClient) delete promptToClient[key];
+
     // Track visited servers to detect circular references - reset on each call
     const visitedServers = new Set<string>();
 
@@ -646,6 +646,9 @@ export const createServer = async (
     );
     const allResources: z.infer<typeof ListResourcesResultSchema>["resources"] =
       [];
+
+    // Clear stale mappings before repopulating
+    for (const key in resourceToClient) delete resourceToClient[key];
 
     // Track visited servers to detect circular references - reset on each call
     const visitedServers = new Set<string>();

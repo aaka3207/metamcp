@@ -347,6 +347,7 @@ export class McpServerPool {
     this.sessionTimestamps = {};
     this.serverParamsCache = {};
     this.creatingIdleSessions.clear();
+    this.backgroundIdleSessionsByNamespace.clear();
 
     // Clear cleanup timer
     if (this.cleanupTimer) {
