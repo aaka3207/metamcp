@@ -32,20 +32,28 @@ const TOKEN_INTROSPECTION_CACHE_MAX_SIZE = 10_000;
 const tokenIntrospectionCache = new Map<
   string,
   {
-    result: { valid: boolean; user_id?: string; scopes?: string[]; error?: string };
+    result: {
+      valid: boolean;
+      user_id?: string;
+      scopes?: string[];
+      error?: string;
+    };
     expiresAt: number;
   }
 >();
 
 // Cleanup stale cache entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of tokenIntrospectionCache) {
-    if (now > entry.expiresAt) {
-      tokenIntrospectionCache.delete(key);
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of tokenIntrospectionCache) {
+      if (now > entry.expiresAt) {
+        tokenIntrospectionCache.delete(key);
+      }
     }
-  }
-}, 5 * 60 * 1000);
+  },
+  5 * 60 * 1000,
+);
 
 /**
  * Helper function to get the correct base URL from request
@@ -111,9 +119,15 @@ async function validateOAuthToken(
         const introspectResponse = await fetch(introspectRequest);
 
         if (!introspectResponse.ok) {
-          const result = { valid: false, error: "Token introspection failed" } as const;
+          const result = {
+            valid: false,
+            error: "Token introspection failed",
+          } as const;
           // Cache failures briefly (10s) to avoid hammering on repeated bad tokens
-          tokenIntrospectionCache.set(token, { result, expiresAt: Date.now() + 10_000 });
+          tokenIntrospectionCache.set(token, {
+            result,
+            expiresAt: Date.now() + 10_000,
+          });
           return result;
         }
 
@@ -124,8 +138,14 @@ async function validateOAuthToken(
         };
 
         if (!introspectData.active) {
-          const result = { valid: false, error: "Token is not active" } as const;
-          tokenIntrospectionCache.set(token, { result, expiresAt: Date.now() + 10_000 });
+          const result = {
+            valid: false,
+            error: "Token is not active",
+          } as const;
+          tokenIntrospectionCache.set(token, {
+            result,
+            expiresAt: Date.now() + 10_000,
+          });
           return result;
         }
 
@@ -139,7 +159,9 @@ async function validateOAuthToken(
 
         // Cache successful validations for the full TTL
         // Evict oldest if cache is full
-        if (tokenIntrospectionCache.size >= TOKEN_INTROSPECTION_CACHE_MAX_SIZE) {
+        if (
+          tokenIntrospectionCache.size >= TOKEN_INTROSPECTION_CACHE_MAX_SIZE
+        ) {
           const firstKey = tokenIntrospectionCache.keys().next().value;
           if (firstKey) tokenIntrospectionCache.delete(firstKey);
         }
@@ -342,6 +364,7 @@ export const authenticateApiKey = async (
           });
         }
 
+        setOAuthChallengeHeader(req, res, "invalid_token");
         return res.status(401).json({
           error: "invalid_credentials",
           error_description:
@@ -390,6 +413,7 @@ export const authenticateApiKey = async (
           });
         }
 
+        setOAuthChallengeHeader(req, res, "invalid_token");
         return res.status(401).json({
           error: "invalid_token",
           error_description:
@@ -499,6 +523,32 @@ function sendApiKeyRequiredResponse(res: express.Response): express.Response {
 }
 
 /**
+ * Set the WWW-Authenticate challenge header. MCP clients rely on this header
+ * (and its resource_metadata) to discover the authorization server and start
+ * or restart the OAuth flow — it must be present on every OAuth-related 401,
+ * including expired/invalid tokens, or clients silently stop working instead
+ * of re-authenticating.
+ */
+function setOAuthChallengeHeader(
+  req: express.Request,
+  res: express.Response,
+  error?: string,
+): void {
+  const baseUrl = getBaseUrl(req);
+
+  const parts = [`Bearer realm="MetaMCP"`];
+  if (error) {
+    parts.push(`error="${error}"`);
+  }
+  parts.push(
+    `scope="admin"`,
+    `resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`,
+  );
+
+  res.set("WWW-Authenticate", parts.join(", "));
+}
+
+/**
  * Send OAuth challenge response with proper WWW-Authenticate header
  */
 function sendOAuthChallengeResponse(
@@ -506,17 +556,9 @@ function sendOAuthChallengeResponse(
   res: express.Response,
   endpoint: DatabaseEndpoint,
 ): express.Response {
+  setOAuthChallengeHeader(req, res);
+
   const baseUrl = getBaseUrl(req);
-
-  // Set WWW-Authenticate header for OAuth flow
-  const bearerChallenge = [
-    `Bearer realm="MetaMCP"`,
-    `scope="admin"`,
-    `resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`,
-  ].join(", ");
-
-  res.set("WWW-Authenticate", bearerChallenge);
-
   const authMethods = ["Authorization header (Bearer token)"];
 
   // Add API key methods if also enabled

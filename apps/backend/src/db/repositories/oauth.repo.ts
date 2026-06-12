@@ -139,6 +139,16 @@ export class OAuthRepository {
       .where(eq(oauthRefreshTokensTable.refresh_token, token));
   }
 
+  async updateRefreshTokenExpiry(
+    token: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    await db
+      .update(oauthRefreshTokensTable)
+      .set({ expires_at: expiresAt })
+      .where(eq(oauthRefreshTokensTable.refresh_token, token));
+  }
+
   // ===== Cleanup =====
 
   async cleanupExpired(): Promise<void> {

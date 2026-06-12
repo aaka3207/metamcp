@@ -11,6 +11,16 @@ import {
 
 const tokenRouter = express.Router();
 
+// Claude Desktop rarely uses refresh tokens, so the access token lifetime is
+// effectively the session length. The refresh token must outlive the access
+// token, otherwise both expire at the same instant and refresh can never succeed.
+const ACCESS_TOKEN_LIFETIME_SECONDS = 90 * 24 * 3600; // 90 days
+const REFRESH_TOKEN_LIFETIME_SECONDS = 180 * 24 * 3600; // 180 days
+// After rotation the old refresh token stays valid briefly so a client that
+// never received the response (lost network, concurrent refresh) can retry
+// without being permanently locked out.
+const ROTATION_GRACE_SECONDS = 60;
+
 /**
  * OAuth 2.0 Token Endpoint
  * Handles token exchange requests from MCP clients
@@ -33,8 +43,14 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
       });
     }
 
-    const { grant_type, code, redirect_uri, client_id, code_verifier, refresh_token } =
-      req.body;
+    const {
+      grant_type,
+      code,
+      redirect_uri,
+      client_id,
+      code_verifier,
+      refresh_token,
+    } = req.body;
 
     // Validate grant type
     if (grant_type !== "authorization_code" && grant_type !== "refresh_token") {
@@ -83,13 +99,12 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
         });
       }
 
-      // Rotate: delete old refresh token, issue new access + refresh tokens
-      await oauthRepository.deleteRefreshToken(refresh_token);
-
+      // Rotate: issue new access + refresh tokens first, then put the old
+      // refresh token on a short grace expiry. Never delete it before the
+      // client has had a chance to store the new one.
       const newAccessToken = generateSecureAccessToken();
-      const accessExpiresIn = 30 * 24 * 3600; // 30 days - Claude Desktop doesn't reliably use refresh tokens
+      const accessExpiresIn = ACCESS_TOKEN_LIFETIME_SECONDS;
       const newRefreshToken = generateSecureRefreshToken();
-      const refreshExpiresIn = 30 * 24 * 3600; // 30 days
 
       await oauthRepository.setAccessToken(newAccessToken, {
         client_id: tokenData.client_id,
@@ -102,15 +117,28 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
         client_id: tokenData.client_id,
         user_id: tokenData.user_id,
         scope: tokenData.scope,
-        expires_at: Date.now() + refreshExpiresIn * 1000,
+        expires_at: Date.now() + REFRESH_TOKEN_LIFETIME_SECONDS * 1000,
       });
+
+      // Cap at the token's original expiry so replaying an old token can't
+      // extend its life indefinitely.
+      const graceExpiry = new Date(
+        Math.min(
+          tokenData.expires_at.getTime(),
+          Date.now() + ROTATION_GRACE_SECONDS * 1000,
+        ),
+      );
+      await oauthRepository.updateRefreshTokenExpiry(
+        refresh_token,
+        graceExpiry,
+      );
 
       logger.info("[OAuth] refresh_token rotated successfully", {
         clientId: tokenData.client_id,
         userId: tokenData.user_id,
         newAccessTokenPrefix: newAccessToken.substring(0, 16) + "...",
         accessExpiresIn,
-        refreshExpiresInDays: 30,
+        refreshExpiresInDays: REFRESH_TOKEN_LIFETIME_SECONDS / (24 * 3600),
       });
 
       return res.json({
@@ -260,9 +288,9 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
 
     // Generate access token and refresh token
     const accessToken = generateSecureAccessToken();
-    const accessExpiresIn = 30 * 24 * 3600; // 30 days - Claude Desktop doesn't reliably use refresh tokens
+    const accessExpiresIn = ACCESS_TOKEN_LIFETIME_SECONDS;
     const refreshToken = generateSecureRefreshToken();
-    const refreshExpiresIn = 30 * 24 * 3600; // 30 days
+    const refreshExpiresIn = REFRESH_TOKEN_LIFETIME_SECONDS;
 
     // Store access token data
     await oauthRepository.setAccessToken(accessToken, {
@@ -284,7 +312,7 @@ tokenRouter.post("/oauth/token", rateLimitToken, async (req, res) => {
       clientId: codeData.client_id,
       userId: codeData.user_id,
       accessExpiresIn,
-      refreshExpiresInDays: 30,
+      refreshExpiresInDays: REFRESH_TOKEN_LIFETIME_SECONDS / (24 * 3600),
     });
 
     res.json({
